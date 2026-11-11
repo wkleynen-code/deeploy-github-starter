@@ -86,7 +86,7 @@ The run GitHub started when you created your copy did nothing in Deeploy and dep
 
 ## Step 4: Play the scenarios
 
-Run them in order. A, B and C are pushes to `main`. Each runs the pipeline (Actions → *Pipeline*), with four jobs:
+Run them in order. A, B and C are pushes to `main`. Each runs the pipeline (in GitHub: the *Actions* tab → *Pipeline*), with four jobs:
 
 1. **Tests**: runs the tests of the AI system, and shows each result with the control it proves.
 2. **Evidence in Deeploy**: writes the results into the test report and updates the controls. Also runs when tests failed.
@@ -121,7 +121,7 @@ At the top of the run's page, each job says in a line what happened, with the li
 
 This is what happens when, for example, your AI lead makes a control stricter.
 
-**Do:** in Deeploy, go to the organization's control frameworks, open *Engineering AI policies (starter)*, find POL-1 and edit its description (e.g. "Every answer AND every e-mail contains the disclaimer."). Or from your terminal: `deeploy-ci change-control POL-1 "Every answer AND every e-mail contains the disclaimer."`. Then in GitHub: Actions → *Deeploy control changes → GitHub issues* → Run workflow. (It also runs once a day by itself.)
+**Do:** in Deeploy, go to the organization's control frameworks, open *Engineering AI policies (starter)*, find POL-1 and edit its description (e.g. "Every answer AND every e-mail contains the disclaimer."). Or from your terminal: `deeploy-ci change-control POL-1 "Every answer AND every e-mail contains the disclaimer."`. Then in GitHub: the *Actions* tab → *Deeploy control changes → GitHub issues* → *Run workflow*. (It also runs once a day by itself.)
 
 - **GitHub:** a new issue showing the description of POL-1 before and after the change, for the engineers to implement and test. The workflow reads this from Deeploy's audit log, which records every change with who made it and when.
 - **Deeploy:** POL-1 is *In progress*. Its evidence says what changed (before and after), by whom and when, and links to the issue. It stays *In progress*, even when the tests pass, until the issue is closed and someone sets POL-1 back to *Completed* in Deeploy.
