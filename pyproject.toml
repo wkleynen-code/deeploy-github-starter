@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deeploy-ci"
+version = "0.1.0"
+description = "Connect a GitHub Actions pipeline to Deeploy: test evidence, release approval, rule changes as issues"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.31", "pyyaml>=6"]
+
+[project.scripts]
+deeploy-ci = "deeploy_ci.cli:main"
+
+[tool.setuptools]
+packages = ["deeploy_ci"]

@@ -1,0 +1,111 @@
+"""`gate`: register the commit as a version in Deeploy and wait for approval. `released`: mark it live."""
+from __future__ import annotations
+
+import json
+import os
+import time
+
+from .config import Config
+from .deeploy import Deeploy, DeeployUnavailable
+from .evidence import RECORD_FILE
+from .github import Run, set_output, summary
+
+
+def gate(cfg: Config, args) -> None:
+    mode = cfg.approval.get("mode", "hard")
+    if mode == "off":
+        summary("## Approval in Deeploy: off\n\n`approval.mode` is `off`.")
+        return
+    run = Run.current()
+    record = json.load(open(RECORD_FILE)) if os.path.exists(RECORD_FILE) else None
+    card = model_card(cfg, run, record)
+    dp = Deeploy(cfg)
+    if problems := _evidence_problems(cfg, dp):
+        summary(f"## Approval in Deeploy: blocked\n\nThe evidence in Deeploy is not complete: {'; '.join(problems)}.")
+        raise SystemExit(1)
+
+    before = {v["id"] for v in dp.get(f"{dp.D}/versionHistory")}
+    try:   # sent once only: a second PATCH would register a second version
+        dp.patch(dp.D, json={"deploymentType": "Registration", "repositoryId": None, "branchName": None,
+                             "commit": None, "contractPath": None, "modelCard": card,
+                             "approverUserIds": dp.approvers(cfg.approval.get("approvers") or []),
+                             "messageToApprovers": f"Release {run.sha} by {run.actor}, run #{run.number}: {run.url}"[:1000]})
+    except DeeployUnavailable:
+        print("Deeploy is slow to confirm the registration; waiting for the version to appear")
+    version = _wait_for_new_version(dp, before)
+    set_output("version_id", version["id"])
+    url = dp.version_url(version["id"])
+    print(f"Version {version['id'][:8]} registered. Approve it in Deeploy: {url}", flush=True)
+
+    if mode == "soft":
+        summary(f"## Approval in Deeploy: registered for review\n\nVersion `{version['id'][:8]}` asks for approval; "
+                f"the release continues (`approval.mode: soft`). [Review it in Deeploy]({url})")
+        return
+    _wait_for_decision(cfg, dp, version["id"], url)
+
+
+def model_card(cfg: Config, run: Run, record: dict | None) -> str:
+    """What the approver reads in Deeploy."""
+    card = (f"# Release {run.sha}\n\n| | |\n|---|---|\n| Commit | [{run.sha}]({run.commit_url}) |\n"
+            f"| By | {run.actor} |\n| Pipeline run | [#{run.number}]({run.url}) |\n| Registered | {cfg.stamp()} |\n")
+    if record:
+        rows = "\n".join(f"| {t['test']} | {'PASS' if t['status'] == 'passed' else 'FAIL'} | {', '.join(t['controls'])} |"
+                         for t in record["tests"])
+        card += f"\n## Tests\n\n| Test | Result | Controls |\n|---|---|---|\n{rows}\n"
+    return card
+
+
+def _evidence_problems(cfg: Config, dp: Deeploy) -> list[str]:
+    """The report must be complete and the automated checks met, as Deeploy sees it now."""
+    report_id = cfg.deeploy.get("report_id")
+    answers = (dp.get(f"{dp.U}/documentation").get(report_id) or {}).get("0") or {}
+    problems = []
+    if (filled := sum(1 for v in answers.values() if v)) < len(cfg.tests):
+        problems.append(f"test report {filled}/{len(cfg.tests)}")
+    controls = dp.use_case_controls()
+    problems += [f"automated check on {a} not met" for a in cfg.own_controls
+                 if a in controls and not (dp.doc_check(controls[a]["id"]) or {}).get("checked")]
+    return problems
+
+
+def _wait_for_new_version(dp: Deeploy, before: set) -> dict:
+    for _ in range(60):
+        if new := [v for v in dp.get(f"{dp.D}/versionHistory") if v["id"] not in before]:
+            return new[0]
+        time.sleep(3)
+    raise DeeployUnavailable("the new version did not appear in Deeploy")
+
+
+def _wait_for_decision(cfg: Config, dp: Deeploy, version_id: str, url: str) -> None:
+    minutes = int(cfg.approval.get("timeout_minutes", 30))
+    deadline, last_note = time.time() + 60 * minutes, 0.0
+    while time.time() < deadline:
+        for a in dp.get(f"{dp.D}/versions/{version_id}").get("approvals") or []:
+            who = f"{a.get('userFirstName', '')} {a.get('userLastName', '')}".strip()
+            if a.get("status") == "approved":
+                summary(f"## Approval in Deeploy: approved by {who}\n\nVersion `{version_id[:8]}` may go to production.")
+                return
+            if a.get("status") == "changesRequested":
+                summary(f"## Approval in Deeploy: changes requested by {who}\n\n\"{a.get('comment') or '-'}\". Nothing is deployed.")
+                raise SystemExit(1)
+        if time.time() - last_note > 60:
+            print(f"  waiting for approval: {url}", flush=True)
+            last_note = time.time()
+        time.sleep(5)
+    summary(f"## Approval in Deeploy: no decision within {minutes} minutes\n\n"
+            f"[Approve it in Deeploy]({url}) and re-run this job.")
+    raise SystemExit(1)
+
+
+def released(cfg: Config, args) -> None:
+    dp = Deeploy(cfg)
+    live = lambda: (dp.get(dp.D).get("activeVersion") or {}).get("id") == args.version_id
+    if not live():
+        dp.post(f"{dp.D}/versions/{args.version_id}/deploy", json={})
+    for _ in range(30):
+        if live():
+            summary(f"## Live in Deeploy\n\nVersion `{args.version_id[:8]}` is the live version.")
+            return
+        time.sleep(2)
+    print(f"::warning::Version {args.version_id[:8]} is not shown as live in Deeploy yet")
+

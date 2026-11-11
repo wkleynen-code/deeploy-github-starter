@@ -1,0 +1,26 @@
+# Daily: controls changed in Deeploy become GitHub issues, and the control goes to In progress until it is done.
+name: Deeploy control changes → GitHub issues
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    environment: deeploy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: pip install -q .
+      - run: deeploy-ci watch
+        env:
+          DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}

@@ -1,0 +1,77 @@
+# Your pipeline with Deeploy added. In your own workflow you add the two jobs marked DEEPLOY.
+# The Deeploy credentials live in the GitHub environment "deeploy": only those two jobs can read them.
+name: Pipeline · tests → Deeploy → approval → deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:            # pull requests only run the tests; Deeploy follows main
+  workflow_dispatch:
+
+concurrency:               # a newer commit replaces a run that is still waiting for approval
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:                    # your existing test job; it only has to save its JUnit XML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: pip install -q pytest
+      - name: Run your tests (any framework that writes JUnit XML)
+        run: pytest example --junitxml=results.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: test-results, path: results.xml }
+
+  evidence:                # DEEPLOY: test results → evidence on the controls (also when tests failed)
+    needs: test
+    if: always() && github.event_name != 'pull_request' && needs.test.result != 'cancelled'
+    runs-on: ubuntu-latest
+    environment: deeploy
+    permissions:
+      contents: read
+      issues: write        # an issue per failing control
+    env:
+      DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: pip install -q .
+      - uses: actions/download-artifact@v8
+        with: { name: test-results }
+      - run: deeploy-ci report results.xml
+      - uses: actions/upload-artifact@v7      # the evidence record stays in GitHub: your audit trail
+        with: { name: deeploy-evidence, path: deeploy-evidence.json, retention-days: 90, if-no-files-found: ignore }
+
+  release:                 # DEEPLOY: approval before production, then your deploy
+    needs: [test, evidence]                   # only when every test passed
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: deeploy
+    env:
+      DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: pip install -q .
+      - uses: actions/download-artifact@v8
+        with: { name: deeploy-evidence }
+      - name: Approval in Deeploy (approval.mode in deeploy.yaml)
+        id: gate
+        run: deeploy-ci gate
+      - name: Deploy to production (replace with your own deploy)
+        run: echo "Deploying ${GITHUB_SHA::7}"
+      - name: Mark the version live in Deeploy
+        if: steps.gate.outputs.version_id != ''
+        run: deeploy-ci released ${{ steps.gate.outputs.version_id }}
