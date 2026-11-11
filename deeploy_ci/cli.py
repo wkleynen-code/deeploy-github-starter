@@ -1,6 +1,7 @@
 """deeploy-ci: connect a GitHub Actions pipeline to Deeploy.
 
   setup                 once: create the example in Deeploy and save the ids in deeploy.yaml
+  test-summary FILE     after the tests: the results in the run summary (no Deeploy needed)
   report RESULTS.xml    after the tests: results -> evidence on the controls
   gate                  before the deploy: register the version, wait for approval
   released VERSION_ID   after the deploy: mark the version live
@@ -17,9 +18,9 @@ from pathlib import Path
 from . import approval, changes, evidence, provision
 from .config import Config
 from .deeploy import DeeployError, DeeployUnavailable
-from .github import summary
+from .github import notice, summary
 
-COMMANDS = {"setup": provision.setup, "report": evidence.report, "gate": approval.gate,
+COMMANDS = {"setup": provision.setup, "test-summary": evidence.test_summary, "report": evidence.report, "gate": approval.gate,
             "released": approval.released, "watch": changes.watch, "change-control": changes.change_control}
 
 
@@ -27,6 +28,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="deeploy-ci", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
     sub.add_parser("setup", help="create the example in Deeploy")
+    sub.add_parser("test-summary", help="test results -> run summary").add_argument("junit", nargs="?", default="results.xml")
     r = sub.add_parser("report", help="test results -> evidence")
     r.add_argument("junit", nargs="?", default="results.xml", help="JUnit XML file (default: results.xml)")
     sub.add_parser("gate", help="register the version and wait for approval")
@@ -52,15 +54,18 @@ def main(argv: list[str] | None = None) -> None:
     args = parse(argv)
     load_dotenv()
     cfg = Config.load()
-    if args.command != "setup" and not all(cfg.deeploy.get(k) for k in ("workspace_id", "use_case_id", "deployment_id")):
-        blocked = args.command in ("gate", "released")   # never release without an approval
-        summary(f"## Deeploy is not set up yet: `{args.command}` {'blocked, nothing is released' if blocked else 'skipped'}"
-                f"\n\nRun `deeploy-ci setup` and commit `deeploy.yaml` (README, step 3).")
-        sys.exit(1 if blocked else 0)
+    needs_setup = args.command not in ("setup", "test-summary")
+    if needs_setup and not all(cfg.deeploy.get(k) for k in ("workspace_id", "use_case_id", "deployment_id")):
+        # nothing is approved without Deeploy, so job 4 (deploy) doesn't run: skipping is safe
+        notice("Deeploy is not set up yet, so this job did nothing and nothing is deployed. Follow the README, "
+               "step 3 (deeploy-ci setup), then push again.", title="Deeploy not set up yet")
+        summary(f"## Deeploy is not set up yet: `{args.command}` skipped\n\nNothing is sent to Deeploy and nothing is "
+                f"deployed. Run `deeploy-ci setup`, commit `deeploy.yaml` and push (README, step 3).")
+        return
     try:
         COMMANDS[args.command](cfg, args)
     except DeeployUnavailable as e:
-        if cfg.on_deeploy_down(args.command) == "skip" and args.command in ("report", "gate", "released", "watch"):
+        if cfg.on_deeploy_down() == "skip" and args.command in ("report", "watch"):
             print(f"::warning::Deeploy did not answer ({e}); skipped, the next run catches up.")
             summary(f"## Deeploy unreachable: `{args.command}` skipped\n\nThe pipeline continues; the next run "
                     f"brings Deeploy up to date.")

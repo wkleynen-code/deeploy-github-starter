@@ -26,9 +26,9 @@ approval:
   mode: hard                # hard: wait for approval | soft: register for review, don't wait | off
   timeout_minutes: 30
   approvers: []             # e-mail addresses; empty = workspace owners (fine to try; in production name people, never the pipeline user)
-  on_deeploy_down: block    # block: no release without Deeploy | skip: release with a warning
 
-on_deeploy_down: skip       # report, watch: skip with a warning when Deeploy is unreachable, never block
+on_deeploy_down: skip       # evidence and control changes: skip with a warning when Deeploy is unreachable
+                            # (without Deeploy nothing is approved, so nothing is deployed)
 timezone: Europe/Amsterdam  # for the times shown in Deeploy and GitHub
 
 # Where in Deeploy. You set workspace_id (setup lists yours when it's empty); setup fills in the rest.

@@ -59,9 +59,8 @@ class Config:
     def report_title(self) -> str:
         return f"Automated test results: {self.use_case['name']}"
 
-    def on_deeploy_down(self, command: str) -> str:
-        if command == "gate":
-            return self.approval.get("on_deeploy_down", "block")
+    def on_deeploy_down(self) -> str:
+        """For report and watch; without Deeploy nothing is approved, so nothing is deployed."""
         return self.data.get("on_deeploy_down", "skip")
 
     def stamp(self, when: datetime | None = None) -> str:

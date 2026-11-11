@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 
 from .config import Config
 from .deeploy import Deeploy
-from .github import Issues, Run, summary
+from .github import Issues, Run, notice, summary
 
 RECORD_FILE = "deeploy-evidence.json"   # this run's results; upload it as an artifact, `gate` reads it
 FAILURE_LABEL = "deeploy-test-failure"
@@ -39,6 +39,26 @@ def read_junit(path: str, tests: dict[str, list[str]]) -> list[Result]:
             found.setdefault(key, (status, message))
     return [Result(test, controls, *found.get(test, ("missing", "this test did not run")))
             for test, controls in tests.items()]
+
+
+def test_summary(cfg: Config, args) -> None:
+    """Job 1: the test results in the run summary, with the controls each test proves. Needs no Deeploy."""
+    results = read_junit(args.junit, cfg.tests)
+    failed = [r for r in results if not r.passed]
+    rows = "\n".join(f"| {r.test} | {'PASS' if r.passed else r.status.upper()} | {', '.join(r.controls)} |"
+                     + (f" {r.message} |" if failed else "") for r in results)
+    head = "| Test | Result | Proves control |" + (" Why it failed |" if failed else "")
+    summary(f"## Tests: {len(results) - len(failed)}/{len(results)} passed\n\n"
+            f"The tests of the AI system, and the Deeploy control each one proves.\n\n"
+            f"{head}\n|---|---|---|{'---|' if failed else ''}\n{rows}\n\n"
+            + ("Next: job 2 writes these results into Deeploy. Job 3 (approval) and job 4 (deploy) don't run, "
+               "because a test failed." if failed else
+               "Next: job 2 writes these results into Deeploy, then job 3 asks for approval there."))
+    for r in failed:
+        notice(f"{r.message or r.status}. It proves {', '.join(r.controls)}: nothing is deployed.", title=f"Test failed: {r.test}",
+               level="error")
+    if not failed:
+        notice(f"All {len(results)} tests passed. They prove {', '.join(cfg.controls)}.", title="Tests passed")
 
 
 def report(cfg: Config, args) -> None:
@@ -91,6 +111,9 @@ def report(cfg: Config, args) -> None:
             f"| Test | Result | Proves control |\n|---|---|---|\n{tests}\n\n"
             f"| Control in Deeploy | Status | Automated check |\n|---|---|---|\n{ctrls}\n\n"
             f"[Use case in Deeploy]({dp.use_case_url}) · the full record is in the `{RECORD_FILE}` artifact of this run")
+    notice("Test report " + score + ". " + ", ".join(f"{a}: {label.get(v['status'], v['status'])}"
+                                                    for a, v in record["controls"].items())
+           + f". Use case: {dp.use_case_url}", title="Evidence written to Deeploy")
 
 
 def _save(record: dict) -> None:

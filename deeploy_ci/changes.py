@@ -7,17 +7,34 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .deeploy import Deeploy
 from .evidence import CONTROL_CHANGE_LABEL
-from .github import Issues, summary
+from .github import Issues, notice, summary
 
 CHANGE_EVIDENCE = "Control change"   # name prefix of the evidence watch adds; replaced on the next change
+PAGE = 100
+
+
+def _ms(when: datetime) -> int:
+    return int(when.timestamp() * 1000)
+
+
+def _logs(dp: Deeploy, start: int, end: int, **filters) -> list[dict]:
+    """Deeploy's audit log: every change, with who, when and the new values. All pages, filtered (e.g. logType)."""
+    found, offset = [], 0
+    while True:
+        page = dp.get("/logs", params={"limit": PAGE, "offset": offset, "start": start, "end": end,
+                                       **{k: f"eq:{v}" for k, v in filters.items()}})
+        found += page
+        if len(page) < PAGE:
+            return found
+        offset += PAGE
 
 
 def watch(cfg: Config, args) -> None:
     dp, issues = Deeploy(cfg), Issues()
     now = datetime.now(timezone.utc)
     since = now - timedelta(minutes=args.minutes)
-    logs = dp.get("/logs", params={"limit": 200, "start": int(since.timestamp() * 1000),
-                                   "end": int(now.timestamp() * 1000) + 60_000})
+    window = (_ms(since), _ms(now) + 60_000)
+    logs = _logs(dp, *window, logType="controlEdited") + _logs(dp, *window, logType="controlFrameworkEdited")
     handled = " ".join(i.get("body") or "" for i in issues.list(CONTROL_CHANGE_LABEL, state="all"))
     new = [log for log in sorted(logs, key=lambda x: x["createdAt"])
            if log["id"] not in handled and log["createdAt"] >= since.isoformat()[:23]]   # Deeploy's filter is loose
@@ -48,32 +65,49 @@ def _who_when(cfg: Config, logs: list[dict]) -> tuple[str, str, str]:
     return log.get("executedByName") or "someone", when, ", ".join(x["id"] for x in logs)
 
 
+def _before(cfg: Config, dp: Deeploy, control_id: str, abbr: str, field: str, edit: dict) -> str | None:
+    """The value before this edit: from the previous edit of the control in the audit log, else as setup created it."""
+    first = datetime.fromisoformat(edit["createdAt"].replace("Z", "+00:00"))
+    earlier = dp.get("/logs", params={"limit": 50, "start": 0, "end": _ms(first) - 1, "sort": "createdAt:desc",
+                                      "resourceId": f"eq:{control_id}", "logType": "eq:controlEdited"})
+    for log in earlier:
+        if field in (log.get("requestBody") or {}):
+            return str(log["requestBody"][field])
+    return cfg.own_controls.get(abbr) if field == "description" else None
+
+
 def _control_changed(cfg: Config, dp: Deeploy, issues: Issues, c: dict, logs: list[dict]):
-    """The control goes to In progress, gets an issue, and the reason plus the issue as evidence."""
+    """The control goes to In progress, gets an issue, and the change (before and after) plus the issue as evidence."""
     abbr, name, ucc = c["control"]["abbreviation"], c["control"]["name"], c["id"]
     who, when, log_ids = _who_when(cfg, logs)
-    changes = "\n".join(f"- **{k}**: {v}" for k, v in (logs[-1].get("requestBody") or {}).items() if k != "checks")
+    after = {k: str(v) for k, v in (logs[-1].get("requestBody") or {}).items() if k != "checks"}
+    before = {k: _before(cfg, dp, c["controlId"], abbr, k, logs[0]) for k in after}
+    changes = "\n\n".join(f"**{k}**\n- Before: {before[k] if before[k] is not None else '(unknown)'}\n- After: {v}"
+                           for k, v in after.items())
     if c["status"] != "inProgress":
         dp.patch(f"{dp.U}/useCaseControls/{ucc}", json={"status": "inProgress"})
         c["status"] = "inProgress"
     issue = issues.open(
         f"[{abbr}] Control changed in Deeploy: {name}"[:250],
         f"{who} changed **{abbr} {name}** in Deeploy at {when}. Implement it and update the tests that cover it; then "
-        f"close this issue and complete the control in Deeploy.\n\nNew values:\n{changes}\n\n"
+        f"close this issue and complete the control in Deeploy.\n\n{changes}\n\n"
         f"Control in Deeploy (now *In progress*): {dp.control_url(ucc)}\n\n<sub>Deeploy audit log: {log_ids}</sub>",
         CONTROL_CHANGE_LABEL)
     for e in dp.get(f"{dp.U}/useCaseControls/{ucc}").get("evidences") or []:
         if (e.get("name") or "").startswith(CHANGE_EVIDENCE):
             dp.delete(f"{dp.U}/useCaseControls/{ucc}/evidence/{e['id']}")
-    new_values = "; ".join(f"new {k}: \"{v}\"" for k, v in (logs[-1].get("requestBody") or {}).items() if k != "checks")
+    what = "; ".join(f"{k} changed from \"{before[k] if before[k] is not None else '(unknown)'}\" to \"{v}\""
+                     for k, v in after.items())
     dp.post(f"{dp.U}/useCaseControls/{ucc}/evidence", json={
         "name": f"{CHANGE_EVIDENCE}: In progress until implemented", "evidenceType": "text",
-        "source": f"Changed in Deeploy by {who} at {when}: {new_values}. The engineers implement and test it (see the "
+        "source": f"Changed in Deeploy by {who} at {when}: {what}. The engineers implement and test it (see the "
                   f"GitHub issue); the owner then sets this control to Completed."})
     if issue:
         dp.post(f"{dp.U}/useCaseControls/{ucc}/evidence", json={
             "name": f"{CHANGE_EVIDENCE}: GitHub issue #{issue['number']}", "evidenceType": "link", "source": issue["html_url"]})
     print(f"  {abbr}: In progress" + (f", issue #{issue['number']}" if issue else ""))
+    notice(f"{abbr} changed in Deeploy by {who}: now In progress until implemented."
+           + (f" Issue #{issue['number']}." if issue else ""), title=f"Control changed: {abbr}")
     return abbr, dp.control_url(ucc), issue
 
 
@@ -101,4 +135,5 @@ def change_control(cfg: Config, args) -> None:
     if c is None:
         raise SystemExit(f"{args.control} is not on the use case")
     dp.patch(f"/controls/{c['controlId']}", json={"description": args.text})
-    print(f"{args.control} changed in Deeploy. Next: deeploy-ci watch")
+    print(f"{args.control} changed in Deeploy: {dp.control_url(c['id'])}")
+    print("Next, in GitHub: Actions → Deeploy control changes → GitHub issues → Run workflow")

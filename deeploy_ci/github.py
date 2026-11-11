@@ -35,6 +35,12 @@ def summary(markdown: str) -> None:
     print(markdown)
 
 
+def notice(text: str, title: str = "", level: str = "notice") -> None:
+    """An annotation at the top of the run page in GitHub Actions (level: notice, warning or error)."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::{level}{' title=' + title if title else ''}::{text}")
+
+
 def set_output(name: str, value: str) -> None:
     if path := os.environ.get("GITHUB_OUTPUT"):
         with open(path, "a") as f:

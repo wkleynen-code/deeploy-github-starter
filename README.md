@@ -82,18 +82,18 @@ git add deeploy.yaml
 git commit -m "Connect to Deeploy"
 ```
 
-The run GitHub started when you created your copy stopped at job 3: nothing is released before this setup.
+The run GitHub started when you created your copy did nothing in Deeploy and deployed nothing: it says *Deeploy not set up yet*.
 
 ## Step 4: Play the scenarios
 
 Run them in order. A, B and C are pushes to `main`. Each runs the pipeline (Actions → *Pipeline*), with four jobs:
 
-1. **Tests**: runs the tests of the AI system.
+1. **Tests**: runs the tests of the AI system, and shows each result with the control it proves.
 2. **Evidence in Deeploy**: writes the results into the test report and updates the controls. Also runs when tests failed.
 3. **Approval in Deeploy**: registers the commit as a version in Deeploy and waits until it's approved. Only when every test passed.
 4. **Deploy**: deploys, and marks the version live in Deeploy.
 
-The summary of each job (on the run's page) says what happened in Deeploy and links to the pages. Scenario D uses a second workflow.
+At the top of the run's page, each job says in a line what happened, with the links you need (such as the version to approve). Below, each job's summary shows the details and links to the pages in Deeploy. Scenario D uses a second workflow.
 
 ### A. Everything passes
 
@@ -123,8 +123,8 @@ This is what happens when, for example, your AI lead makes a control stricter.
 
 **Do:** in Deeploy, go to the organization's control frameworks, open *Engineering AI policies (starter)*, find POL-1 and edit its description (e.g. "Every answer AND every e-mail contains the disclaimer."). Or from your terminal: `deeploy-ci change-control POL-1 "Every answer AND every e-mail contains the disclaimer."`. Then in GitHub: Actions → *Deeploy control changes → GitHub issues* → Run workflow. (It also runs once a day by itself.)
 
-- **GitHub:** a new issue with the new description of POL-1, for the engineers to implement and test.
-- **Deeploy:** POL-1 is *In progress*. Its evidence says what changed, by whom and when, and links to the issue. It stays *In progress*, even when the tests pass, until the issue is closed and someone sets POL-1 back to *Completed* in Deeploy.
+- **GitHub:** a new issue showing the description of POL-1 before and after the change, for the engineers to implement and test. The workflow reads this from Deeploy's audit log, which records every change with who made it and when.
+- **Deeploy:** POL-1 is *In progress*. Its evidence says what changed (before and after), by whom and when, and links to the issue. It stays *In progress*, even when the tests pass, until the issue is closed and someone sets POL-1 back to *Completed* in Deeploy.
 
 ## Settings
 
@@ -134,5 +134,5 @@ Everything is configured in `deeploy.yaml`. The settings you are most likely to 
 |---|---|
 | `tests` | Each test, and the controls it proves. |
 | `own_framework` | Defines your own controls (here POL-1 and POL-2: id and description). Setup creates them in Deeploy, in a framework with this name, and puts the automated check on them. Controls and frameworks are shared by all workspaces of your organization, so setup reuses them when they exist, and a change to one shows up everywhere it's used. Controls that already exist in Deeploy, such as `AIA 50.1` from the EU AI Act, can be used in `tests` directly. |
-| `approval.mode` | `hard` (default): job 3 waits for approval, as in scenario A. `soft`: the version is registered in Deeploy for review, but the release doesn't wait. `off`: no approval step. |
+| `approval.mode` | `hard` (default): job 3 waits for approval, as in scenario A. `soft`: the version is registered in Deeploy for review, but job 4 deploys without waiting. `off`: no version in Deeploy, job 4 deploys without approval. |
 | `approval.approvers` | Who approves, as e-mail addresses of members of the Deeploy workspace, with a role its approval rule accepts (setup creates the rule "1 owner" if there is none). Empty means the owners of the workspace. An address that isn't in the workspace stops the release with an error. |

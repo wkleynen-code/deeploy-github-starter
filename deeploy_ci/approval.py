@@ -8,13 +8,15 @@ import time
 from .config import Config
 from .deeploy import Deeploy, DeeployError, DeeployUnavailable
 from .evidence import RECORD_FILE
-from .github import Run, set_output, summary
+from .github import Run, notice, set_output, summary
 
 
 def gate(cfg: Config, args) -> None:
     mode = cfg.approval.get("mode", "hard")
     if mode == "off":
-        summary("## Approval in Deeploy: off\n\n`approval.mode` is `off` in deeploy.yaml: no version is registered.")
+        summary("## Approval in Deeploy: off\n\n`approval.mode` is `off` in deeploy.yaml: no version is registered, "
+                "and job 4 deploys without approval.")
+        set_output("release", "true")
         return
     run = Run.current()
     record = json.load(open(RECORD_FILE)) if os.path.exists(RECORD_FILE) else None
@@ -39,12 +41,15 @@ def gate(cfg: Config, args) -> None:
     url = dp.version_url(version["id"])
     print(f"Version {version['id'][:8]} registered in Deeploy.\n"
           f"  Approve it there: {url}\n"
-          f"  (click Approve; then Deploy, or let the next job of this pipeline deploy it)", flush=True)
+          f"  (click Approve, then Deploy; if you only approve, job 4 deploys it)", flush=True)
+    notice(f"Open {url} and click Approve, then Deploy. This job waits until it's approved.",
+           title="Approve this release in Deeploy")
 
     if mode == "soft":
         summary(f"## Approval in Deeploy: registered for review\n\nVersion `{version['id'][:8]}` is registered in Deeploy "
                 f"and asks for approval, but the release continues (`approval.mode: soft`).\n\n"
                 f"- [Review the version in Deeploy]({url})\n- [Deployment in Deeploy]({dp.deployment_url})")
+        set_output("release", "true")
         return
     _wait_for_decision(cfg, dp, version["id"], url)
 
@@ -90,11 +95,15 @@ def _wait_for_decision(cfg: Config, dp: Deeploy, version_id: str, url: str) -> N
             who = f"{a.get('userFirstName', '')} {a.get('userLastName', '')}".strip()
             if a.get("status") == "approved":
                 summary(f"## Approval in Deeploy: approved by {who}\n\nVersion `{version_id[:8]}` may go to production; "
-                        f"the next job deploys it.\n\n- [Version in Deeploy]({url})")
+                        f"job 4 deploys it.\n\n- [Version in Deeploy]({url})")
+                notice(f"Approved by {who}. Job 4 deploys it.", title="Approved in Deeploy")
+                set_output("release", "true")
                 return
             if a.get("status") == "changesRequested":
                 summary(f"## Approval in Deeploy: changes requested by {who}\n\n\"{a.get('comment') or '-'}\". "
                         f"Nothing is deployed.\n\n- [Version in Deeploy]({url})")
+                notice(f"{who} requested changes: nothing is deployed. {url}", title="Changes requested in Deeploy",
+                       level="error")
                 raise SystemExit(1)
         if time.time() - last_note > 60:
             print(f"  waiting for approval in Deeploy: {url}", flush=True)
@@ -108,6 +117,11 @@ def _wait_for_decision(cfg: Config, dp: Deeploy, version_id: str, url: str) -> N
 def released(cfg: Config, args) -> None:
     """Deploy the approved version in Deeploy, unless someone already clicked Deploy there, and wait until it's live."""
     dp = Deeploy(cfg)
+    url = dp.version_url(args.version_id)
+    if not any(a.get("status") == "approved" for a in dp.get(f"{dp.D}/versions/{args.version_id}").get("approvals") or []):
+        summary(f"## Not marked live in Deeploy\n\nVersion `{args.version_id[:8]}` isn't approved yet (`approval.mode: soft`): "
+                f"it stays waiting for review in Deeploy. [Version in Deeploy]({url})")
+        return
     live = lambda: (dp.get(dp.D).get("activeVersion") or {}).get("id") == args.version_id
     if not live():
         try:
@@ -119,7 +133,8 @@ def released(cfg: Config, args) -> None:
     for _ in range(60):
         if live():
             summary(f"## Live in Deeploy\n\nVersion `{args.version_id[:8]}` is now the live version of the deployment.\n\n"
-                    f"- [Version in Deeploy]({dp.version_url(args.version_id)})\n- [Deployment in Deeploy]({dp.deployment_url})")
+                    f"- [Version in Deeploy]({url})\n- [Deployment in Deeploy]({dp.deployment_url})")
+            notice(f"Version {args.version_id[:8]} is live. {dp.deployment_url}", title="Deployed and live in Deeploy")
             return
         time.sleep(2)
-    print(f"::warning::Version {args.version_id[:8]} is not shown as live in Deeploy yet: {dp.version_url(args.version_id)}")
+    notice(f"Version {args.version_id[:8]} is not shown as live in Deeploy yet: {url}", title="Not live yet", level="warning")
