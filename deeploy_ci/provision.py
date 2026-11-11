@@ -4,9 +4,10 @@ from __future__ import annotations
 import time
 
 from .config import Config
-from .deeploy import DOC_CHECK, Deeploy
+from .deeploy import DOC_CHECK, Deeploy, DeeployError
 
 PENDING = 4   # version status "waiting for approval"
+STAGES = ["exploration", "development", "validation", "production"]   # one step at a time in Deeploy
 
 
 def setup(cfg: Config, args) -> None:
@@ -24,9 +25,20 @@ def setup(cfg: Config, args) -> None:
     _evidence_and_checks(dp, cfg, controls, report_id)
     _approval_rule(dp)
     _deployment(dp, cfg)
+    in_production = _production_stage(dp)
 
     cfg.save_ids(workspace_id=dp.ws, use_case_id=dp.uc, deployment_id=dp.dep, report_id=report_id)
-    print(f"\nIds saved in {cfg.path}: commit it. Use case in Deeploy: {dp.use_case_url}")
+    print(f"""
+Done. In Deeploy you now have:
+  - the use case '{cfg.use_case['name']}'{', in lifecycle stage Production' if in_production else ''}
+      {dp.use_case_url}
+  - on it, the controls {', '.join(cfg.controls)}, each with the automated check and the test report as evidence
+  - the test report, empty until the first pipeline run
+      {dp.report_url(report_id)}
+  - the deployment '{cfg.use_case['name']} (releases)', where the pipeline registers a version for every release
+      {dp.deployment_url}
+{'' if in_production else chr(10) + "  ! Set the use case's lifecycle stage to Production by hand (see above), or the controls don't apply." + chr(10)}
+The ids are saved in {cfg.path}. Next: commit it (README, step 3).""")
 
 
 def _done(what: str, created: bool) -> None:
@@ -64,10 +76,14 @@ def _own_framework(dp: Deeploy, cfg: Config) -> str | None:
     if created:
         framework = dp.post("/controlFrameworks", json={"name": name, "description": name,
                                                         "workspaceIds": [dp.ws], "controlIds": ids})
-    else:
-        current = {c["id"] for c in dp.get(f"/controlFrameworks/{framework['id']}").get("controls") or []}
+    else:   # controls and frameworks belong to the organization: reuse them, and make sure this workspace has it
+        detail = dp.get(f"/controlFrameworks/{framework['id']}")
+        current = {c["id"] for c in detail.get("controls") or []}
         if set(ids) - current:
             dp.patch(f"/controlFrameworks/{framework['id']}", json={"controlIds": sorted(current | set(ids))})
+        if dp.ws not in {w.get("id", w) if isinstance(w, dict) else w for w in detail.get("workspaces") or []}:
+            dp.post(f"/controlFrameworks/{framework['id']}/workspaces", json={"workspaceIds": [dp.ws]})
+            _done(f"framework '{name}' applied to this workspace", True)
     _done(f"framework '{name}'" + (" (every use case in this workspace gets its controls)" if created else ""), created)
     return framework["id"]
 
@@ -149,6 +165,23 @@ def _evidence_and_checks(dp: Deeploy, cfg: Config, controls: dict, report_id: st
             if needed:   # Deeploy shows the template name in the check, so it must be the report's exact title
                 dp.patch(f"/controls/{c['controlId']}", json={"checks": [{"type": DOC_CHECK, "selectedOption": cfg.report_title}]})
             _done(f"automated check on {abbr}", needed)
+
+
+def _production_stage(dp: Deeploy) -> bool:
+    """Controls apply from a lifecycle stage on; ours are for Production, so move the use case there (one step at a time)."""
+    current = (dp.get(dp.U).get("currentStage") or "exploration").lower()
+    if current == "production":
+        _done("lifecycle stage Production", False)
+        return True
+    try:
+        for stage in STAGES[STAGES.index(current) + 1:]:
+            dp.post(f"{dp.U}/stage", json={"targetStage": stage})
+    except (DeeployError, ValueError) as e:
+        print(f"  ! could not set the lifecycle stage to Production ({e}).\n"
+              f"    In Deeploy, open the use case and move its lifecycle stage step by step to Production: {dp.use_case_url}")
+        return False
+    _done("lifecycle stage Production (the controls apply from this stage on)", True)
+    return True
 
 
 def _approval_rule(dp: Deeploy) -> None:

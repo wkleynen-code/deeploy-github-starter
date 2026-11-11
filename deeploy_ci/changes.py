@@ -37,7 +37,9 @@ def watch(cfg: Config, args) -> None:
     rows = "\n".join(f"| [{what}]({url}) | " + (f"[#{i['number']}]({i['html_url']})" if i else "-") + " |"
                      for what, url, i in made)
     summary(f"## Control changes in Deeploy (last {args.minutes} min)\n\n"
-            + (f"| Changed | GitHub issue |\n|---|---|\n{rows}" if made else "None for this use case."))
+            + (f"Each changed control is now *In progress* in Deeploy, with the change and the issue as evidence.\n\n"
+               f"| Changed in Deeploy | GitHub issue |\n|---|---|\n{rows}\n\n[Use case in Deeploy]({dp.use_case_url})"
+               if made else f"No control of this use case changed. [Use case in Deeploy]({dp.use_case_url})"))
 
 
 def _who_when(cfg: Config, logs: list[dict]) -> tuple[str, str, str]:
@@ -63,10 +65,11 @@ def _control_changed(cfg: Config, dp: Deeploy, issues: Issues, c: dict, logs: li
     for e in dp.get(f"{dp.U}/useCaseControls/{ucc}").get("evidences") or []:
         if (e.get("name") or "").startswith(CHANGE_EVIDENCE):
             dp.delete(f"{dp.U}/useCaseControls/{ucc}/evidence/{e['id']}")
+    new_values = "; ".join(f"new {k}: \"{v}\"" for k, v in (logs[-1].get("requestBody") or {}).items() if k != "checks")
     dp.post(f"{dp.U}/useCaseControls/{ucc}/evidence", json={
         "name": f"{CHANGE_EVIDENCE}: In progress until implemented", "evidenceType": "text",
-        "source": f"Changed in Deeploy by {who} at {when}. The engineers implement and test it; the owner then "
-                  f"completes this control."})
+        "source": f"Changed in Deeploy by {who} at {when}: {new_values}. The engineers implement and test it (see the "
+                  f"GitHub issue); the owner then sets this control to Completed."})
     if issue:
         dp.post(f"{dp.U}/useCaseControls/{ucc}/evidence", json={
             "name": f"{CHANGE_EVIDENCE}: GitHub issue #{issue['number']}", "evidenceType": "link", "source": issue["html_url"]})

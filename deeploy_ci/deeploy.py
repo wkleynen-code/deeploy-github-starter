@@ -106,6 +106,13 @@ class Deeploy:
     def use_case_url(self) -> str:
         return f"{self.app}/workspaces/{self.ws}/useCases/{self.uc}"
 
+    @property
+    def deployment_url(self) -> str:
+        return f"{self.app}/workspaces/{self.ws}/deployments/{self.dep}"
+
+    def report_url(self, report_id: str) -> str:
+        return f"{self.use_case_url}/templateDocumentation/{report_id}"
+
     def version_url(self, version_id: str) -> str:
         """The version page in Deeploy, where the approver reviews and approves it."""
         return f"{self.app}/workspaces/{self.ws}/deployments/{self.dep}/versions/{version_id}"

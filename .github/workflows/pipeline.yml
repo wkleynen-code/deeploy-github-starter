@@ -1,6 +1,6 @@
-# Your pipeline with Deeploy added. In your own workflow you add the two jobs marked DEEPLOY.
-# The Deeploy credentials live in the GitHub environment "deeploy": only those two jobs can read them.
-name: Pipeline · tests → Deeploy → approval → deploy
+# The pipeline. Jobs 2-4 are the Deeploy layer on top of your own test and deploy steps.
+# The Deeploy credential lives in the GitHub environment "deeploy": only those jobs can read it.
+name: Pipeline · tests → evidence in Deeploy → approval in Deeploy → deploy
 
 on:
   push:
@@ -16,27 +16,30 @@ permissions:
   contents: read
 
 jobs:
-  test:                    # your existing test job; it only has to save its JUnit XML
+  test:
+    name: 1 · Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: pip install -q pytest
-      - name: Run your tests (any framework that writes JUnit XML)
+      - name: Run the tests of the AI system
         run: pytest example --junitxml=results.xml
-      - uses: actions/upload-artifact@v7
+      - name: Keep the results for the next job
         if: always()
+        uses: actions/upload-artifact@v7
         with: { name: test-results, path: results.xml }
 
-  evidence:                # DEEPLOY: test results → evidence on the controls (also when tests failed)
+  evidence:
+    name: 2 · Evidence in Deeploy
     needs: test
     if: always() && github.event_name != 'pull_request' && needs.test.result != 'cancelled'
     runs-on: ubuntu-latest
     environment: deeploy
     permissions:
       contents: read
-      issues: write        # an issue per failing control
+      issues: write        # an issue per control whose tests failed
     env:
       DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
       DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
@@ -48,15 +51,20 @@ jobs:
       - run: pip install -q .
       - uses: actions/download-artifact@v8
         with: { name: test-results }
-      - run: deeploy-ci report results.xml
-      - uses: actions/upload-artifact@v7      # the evidence record stays in GitHub: your audit trail
+      - name: Fill in the test report and update the controls in Deeploy
+        run: deeploy-ci report results.xml
+      - name: Keep the evidence record in GitHub
+        uses: actions/upload-artifact@v7
         with: { name: deeploy-evidence, path: deeploy-evidence.json, retention-days: 90, if-no-files-found: ignore }
 
-  release:                 # DEEPLOY: approval before production, then your deploy
+  approval:
+    name: 3 · Approval in Deeploy
     needs: [test, evidence]                   # only when every test passed
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: deeploy
+    outputs:
+      version_id: ${{ steps.gate.outputs.version_id }}
     env:
       DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
       DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
@@ -67,11 +75,25 @@ jobs:
       - run: pip install -q .
       - uses: actions/download-artifact@v8
         with: { name: deeploy-evidence }
-      - name: Approval in Deeploy (approval.mode in deeploy.yaml)
+      - name: Register this commit as a version in Deeploy and wait until it's approved there
         id: gate
         run: deeploy-ci gate
-      - name: Deploy to production (replace with your own deploy)
+
+  deploy:
+    name: 4 · Deploy
+    needs: approval
+    if: needs.approval.outputs.version_id != ''
+    runs-on: ubuntu-latest
+    environment: deeploy
+    env:
+      DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      DEEPLOY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: pip install -q .
+      - name: Deploy the AI system (replace with your own deploy)
         run: echo "Deploying ${GITHUB_SHA::7}"
       - name: Mark the version live in Deeploy
-        if: steps.gate.outputs.version_id != ''
-        run: deeploy-ci released ${{ steps.gate.outputs.version_id }}
+        run: deeploy-ci released ${{ needs.approval.outputs.version_id }}

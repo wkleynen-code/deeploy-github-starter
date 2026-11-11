@@ -75,14 +75,22 @@ def report(cfg: Config, args) -> None:
         status = "inProgress" if abbr in failing_controls or f"[{abbr}]" in control_changes else "completed"
         if c["status"] != status:
             dp.patch(f"{dp.U}/useCaseControls/{c['id']}", json={"status": status})
-        record["controls"][abbr] = {"status": status, "url": dp.control_url(c["id"])}
+        checked = (dp.doc_check(c["id"]) or {}).get("checked") if abbr in cfg.own_controls else None
+        record["controls"][abbr] = {"status": status, "check": checked, "url": dp.control_url(c["id"])}
         _sync_issue(issues, failure_issues, abbr, c, [r for r in failed if abbr in r.controls], run, dp)
 
     _save(record)
+    label = {"completed": "Completed", "inProgress": "In progress", "notStarted": "Not started"}
     tests = "\n".join(f"| {r.test} | {'PASS' if r.passed else r.status.upper()} | {', '.join(r.controls)} |" for r in results)
-    ctrls = "\n".join(f"| [{a}]({v['url']}) | {v['status']} |" for a, v in record["controls"].items())
-    summary(f"## Test evidence in Deeploy: {score}\n\n| Test | Result | Controls |\n|---|---|---|\n{tests}\n\n"
-            f"| Control in Deeploy | Status |\n|---|---|\n{ctrls}")
+    ctrls = "\n".join(f"| [{a}]({v['url']}) | {label.get(v['status'], v['status'])} | "
+                      f"{'-' if v['check'] is None else 'met' if v['check'] else 'not met'} |"
+                      for a, v in record["controls"].items())
+    summary(f"## Test evidence in Deeploy: {score}\n\n"
+            f"The results of this run are now in Deeploy: the [test report]({dp.report_url(report_id)}) has one line per "
+            f"test (filled in when it passed), and each control's status follows its tests.\n\n"
+            f"| Test | Result | Proves control |\n|---|---|---|\n{tests}\n\n"
+            f"| Control in Deeploy | Status | Automated check |\n|---|---|---|\n{ctrls}\n\n"
+            f"[Use case in Deeploy]({dp.use_case_url}) · the full record is in the `{RECORD_FILE}` artifact of this run")
 
 
 def _save(record: dict) -> None:

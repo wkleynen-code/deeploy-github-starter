@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command != "setup" and not all(cfg.deeploy.get(k) for k in ("workspace_id", "use_case_id", "deployment_id")):
         blocked = args.command in ("gate", "released")   # never release without an approval
         summary(f"## Deeploy is not set up yet: `{args.command}` {'blocked, nothing is released' if blocked else 'skipped'}"
-                f"\n\nRun `deeploy-ci setup` and commit `deeploy.yaml` (README, step 1).")
+                f"\n\nRun `deeploy-ci setup` and commit `deeploy.yaml` (README, step 3).")
         sys.exit(1 if blocked else 0)
     try:
         COMMANDS[args.command](cfg, args)
