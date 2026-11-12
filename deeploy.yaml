@@ -1,37 +1,32 @@
-# deeploy-ci settings: which AI system you govern, which tests prove which controls, and how releases are approved.
+# deeploy-ci settings: the AI system you govern, which tests prove which controls, and who approves releases.
 
 # The AI system. `setup` creates it in Deeploy as a "use case" (or reuses one with this name).
 use_case:
   name: "Example AI assistant"
-  description: "Starter: CI/CD test results as evidence in Deeploy"
+  description: "Example: CI/CD test results as evidence in Deeploy"
   risk_classification: limited   # unclassified | minimal | limited | high | unacceptable | generalPurposeAI
   owner_email: ""                # only needed when your Deeploy workspace has several owners
 
 # Your tests (name as in the JUnit XML) and the controls each one proves.
-# A control is one of your own below, or one that already exists in Deeploy, e.g. "AIA 50.1" (EU AI Act).
 tests:
   test_answer_contains_disclaimer: [POL-1]
   test_no_personal_data_in_logs: [POL-2]
   test_low_confidence_goes_to_a_human: [POL-2]
 
-# Your own controls. `setup` creates them in Deeploy; when someone changes one there, `watch` opens a GitHub issue.
+# Your own controls. `setup` creates them in Deeploy, in a framework with this name.
 own_framework:
   name: "Engineering AI policies (starter)"
   controls:
     POL-1: "Medical disclaimer. Every answer to a patient contains the 'not medical advice' disclaimer."
     POL-2: "Privacy and oversight. No personal data in logs; low-confidence answers go to a human."
 
-# Approval in Deeploy before production (`gate`).
-approval:
-  mode: hard                # hard: wait for approval | soft: register for review, don't wait | off
-  timeout_minutes: 30
-  approvers: []             # e-mail addresses; empty = workspace owners (fine to try; in production name people, never the pipeline user)
+# Who approves a release in Deeploy: e-mail addresses of members of the workspace.
+# Empty = the workspace owners (fine to try; in production name people, never the pipeline's own user).
+approvers: []
 
-on_deeploy_down: skip       # evidence and control changes: skip with a warning when Deeploy is unreachable
-                            # (without Deeploy nothing is approved, so nothing is deployed)
-timezone: Europe/Amsterdam  # for the times shown in Deeploy and GitHub
+timezone: Europe/Amsterdam   # for the times shown in Deeploy and GitHub
 
-# Where in Deeploy. You set workspace_id (setup lists yours when it's empty); setup fills in the rest.
+# Where in Deeploy. You set workspace_id; setup fills in the rest.
 deeploy:
   api: https://api.app.deeploy.ml
   app: https://app.deeploy.ml

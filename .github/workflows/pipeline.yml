@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install -q pytest .
       - name: Run the tests of the AI system
         run: pytest example --junitxml=results.xml
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install -q .
       - uses: actions/download-artifact@v8
         with: { name: test-results }
@@ -67,7 +67,6 @@ jobs:
     runs-on: ubuntu-24.04
     environment: deeploy
     outputs:
-      release: ${{ steps.gate.outputs.release }}        # "true" once approved (or approval.mode soft / off)
       version_id: ${{ steps.gate.outputs.version_id }}
     env:
       DEEPLOY_CLIENT_ID: ${{ secrets.CLIENT_ID }}
@@ -75,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install -q .
       - name: Get the evidence record of job 2 (its test results go into the version in Deeploy)
         uses: actions/download-artifact@v8
@@ -88,7 +87,7 @@ jobs:
   deploy:
     name: 4 · Deploy
     needs: approval
-    if: needs.approval.outputs.release == 'true'          # never without an approval
+    if: needs.approval.outputs.version_id != ''          # only after job 3 saw the approval
     runs-on: ubuntu-24.04
     environment: deeploy
     env:
@@ -97,10 +96,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install -q .
       - name: Deploy the AI system (replace with your own deploy)
         run: echo "Deploying ${GITHUB_SHA::7}"
       - name: Mark the version live in Deeploy
-        if: needs.approval.outputs.version_id != ''
         run: deeploy-ci released ${{ needs.approval.outputs.version_id }}

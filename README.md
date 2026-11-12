@@ -29,16 +29,16 @@ Every message of the pipeline links to the right page in Deeploy, so you don't h
 
 - A Deeploy workspace to test in, in which you are an owner.
 - Your own copy of this repository on GitHub: on its page, *Use this template* → *Create a new repository*.
-- Python 3.9 or newer.
+- Python 3.10, 3.11 or 3.12 (the versions Deeploy's Python client supports). On a Mac without it: `brew install python@3.12`.
 
-## Step 1: Get your copy
+## Step 1: Install requirements
 
-Clone your copy and install `deeploy-ci`, the Python code in this repository that talks to Deeploy (the pipeline uses it too):
+Clone your copy and install `deeploy-ci`, the Python code in this repository that talks to Deeploy (the pipeline uses it too). It installs Deeploy's Python client with it.
 
 ```bash
 git clone https://github.com/<you>/<your-copy>.git
 cd <your-copy>
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -e .
@@ -47,9 +47,9 @@ cp .env.example .env
 
 `deeploy-ci` is now a command in this terminal. Run it as `deeploy-ci …`, from this folder and with the virtual environment active (`source .venv/bin/activate` in a new terminal).
 
-## Step 2: Credentials
+## Step 2: Deeploy credentials
 
-Two credentials, each in its own place:
+Two Deeploy credentials, each in its own place:
 
 - **For you, on your machine:** in Deeploy, Credentials → Account credentials → + Add. Paste the key into `.env`. It stays on your machine and never goes to GitHub.
 - **For the pipeline, in GitHub:** in Deeploy, Credentials → Scoped OAuth credentials → + Add. Give it an end date and these scopes: Organization *read*, Workspace *read*, Use case *read, write, delete*, Deployment *read, write*. Then in GitHub: Settings → Environments → New environment, named `deeploy`. Under *Deployment branches*, allow only `main`. Add the credential as the environment secrets `CLIENT_ID` and `CLIENT_SECRET`. Deeploy never gets access to GitHub.
@@ -133,6 +133,22 @@ Everything is configured in `deeploy.yaml`. The settings you are most likely to 
 | Setting | What it does |
 |---|---|
 | `tests` | Each test, and the controls it proves. |
-| `own_framework` | Defines your own controls (here POL-1 and POL-2: id and description). Setup creates them in Deeploy, in a framework with this name, and puts the automated check on them. Controls and frameworks are shared by all workspaces of your organization, so setup reuses them when they exist, and a change to one shows up everywhere it's used. Controls that already exist in Deeploy, such as `AIA 50.1` from the EU AI Act, can be used in `tests` directly. |
-| `approval.mode` | `hard` (default): job 3 waits for approval, as in scenario A. `soft`: the version is registered in Deeploy for review, but job 4 deploys without waiting. `off`: no version in Deeploy, job 4 deploys without approval. |
-| `approval.approvers` | Who approves, as e-mail addresses of members of the Deeploy workspace, with a role its approval rule accepts (setup creates the rule "1 owner" if there is none). Empty means the owners of the workspace. An address that isn't in the workspace stops the release with an error. |
+| `own_framework` | Defines your own controls (here POL-1 and POL-2: id and description). Setup creates them in Deeploy, in a framework with this name, and puts the automated check on them. Controls and frameworks are shared by all workspaces of your organization, so setup reuses them when they exist, and a change to one shows up everywhere it's used. Controls that already exist in Deeploy, such as `AIA 50.1` from the EU AI Act, can be used in `tests` too, when their framework is applied to your workspace. |
+| `approvers` | Who approves, as e-mail addresses of members of the Deeploy workspace, with a role its approval rule accepts (setup creates the rule "1 owner" if there is none). Empty means the owners of the workspace. An address that isn't in the workspace stops the release with an error. |
+
+## How the code is organised
+
+`deeploy_ci/` is the code the commands run. The pipeline jobs call it; you only run `setup` (and `change-control`) yourself.
+
+| File | What it does |
+|---|---|
+| `cli.py` | The `deeploy-ci` command: picks the right function for each command |
+| `config.py` | Reads `deeploy.yaml`, and writes the ids setup creates back into it |
+| `deeploy_client.py` | `DeeployClient`: all communication with Deeploy |
+| `github.py` | The run summary, the annotations at the top of a run, and the GitHub issues |
+| `setup_deeploy.py` | `setup`: creates the example in Deeploy |
+| `test_results.py` | `test-summary` (job 1) and `report` (job 2): the test results in GitHub and as evidence in Deeploy |
+| `release_approval.py` | `gate` (job 3) and `released` (job 4): the version in Deeploy, its approval, marking it live |
+| `control_changes.py` | `watch` (the daily workflow) and `change-control`: controls changed in Deeploy become GitHub issues |
+
+Where it can, `DeeployClient` uses [Deeploy's Python client](https://docs.deeploy.ai/docs/next/python-client/introduction): to create the controls, the control framework and the deployment, and to register a new version for approval. The rest of what this example does (the use case and its lifecycle stage, the test report, evidence and automated checks, following the approval, the audit log) isn't in the Python client yet, so it calls Deeploy's REST API directly.

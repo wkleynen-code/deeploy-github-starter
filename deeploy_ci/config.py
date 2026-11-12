@@ -1,4 +1,4 @@
-"""deeploy.yaml: what you configure, plus the Deeploy ids that `setup` writes back."""
+"""deeploy.yaml: what you configure, plus the Deeploy ids that `setup` writes back into it."""
 from __future__ import annotations
 
 import os
@@ -10,8 +10,6 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-ID_KEYS = ("workspace_id", "use_case_id", "deployment_id", "report_id")
-
 
 @dataclass
 class Config:
@@ -19,15 +17,20 @@ class Config:
     data: dict
 
     @classmethod
-    def load(cls, path: str | None = None) -> Config:
-        p = Path(path or os.environ.get("DEEPLOY_CONFIG", "deeploy.yaml"))
-        if not p.exists():
-            raise SystemExit(f"{p} not found: run from the folder that holds it, or set DEEPLOY_CONFIG")
-        return cls(p, yaml.safe_load(p.read_text()) or {})
+    def load(cls) -> Config:
+        path = Path(os.environ.get("DEEPLOY_CONFIG", "deeploy.yaml"))
+        if not path.exists():
+            raise SystemExit(f"{path} not found: run deeploy-ci from the folder of your copy")
+        return cls(path, yaml.safe_load(path.read_text()) or {})
 
     @property
     def deeploy(self) -> dict:
+        """Where in Deeploy: the workspace, and the ids setup filled in."""
         return self.data["deeploy"]
+
+    @property
+    def is_set_up(self) -> bool:
+        return all(self.deeploy.get(k) for k in ("workspace_id", "use_case_id", "deployment_id", "report_id"))
 
     @property
     def use_case(self) -> dict:
@@ -35,40 +38,39 @@ class Config:
 
     @property
     def tests(self) -> dict[str, list[str]]:
-        """Test name -> the controls it provides evidence for."""
+        """Each test, and the controls it proves."""
         return {name: list(controls or []) for name, controls in (self.data.get("tests") or {}).items()}
 
     @property
     def controls(self) -> list[str]:
-        """Every control the tests cover, in config order."""
+        """Every control the tests prove, in the order of deeploy.yaml."""
         return list(dict.fromkeys(c for controls in self.tests.values() for c in controls))
 
     @property
-    def own_framework(self) -> dict:
-        return self.data.get("own_framework") or {}
+    def framework_name(self) -> str:
+        return self.data["own_framework"]["name"]
 
     @property
     def own_controls(self) -> dict[str, str]:
-        return dict(self.own_framework.get("controls") or {})
+        """Your own controls: id -> description."""
+        return dict(self.data["own_framework"]["controls"])
 
     @property
-    def approval(self) -> dict:
-        return self.data.get("approval") or {}
+    def approvers(self) -> list[str]:
+        return list(self.data.get("approvers") or [])
 
     @property
     def report_title(self) -> str:
+        """The test report's name in Deeploy; the automated check on the controls refers to it."""
         return f"Automated test results: {self.use_case['name']}"
 
-    def on_deeploy_down(self) -> str:
-        """For report and watch; without Deeploy nothing is approved, so nothing is deployed."""
-        return self.data.get("on_deeploy_down", "skip")
-
-    def stamp(self, when: datetime | None = None) -> str:
+    def time(self, when: datetime | None = None) -> str:
+        """A moment in the time zone of deeploy.yaml, e.g. '2026-11-12 10:30 CET'."""
         t = (when or datetime.now(timezone.utc)).astimezone(ZoneInfo(self.data.get("timezone") or "UTC"))
         return f"{t:%Y-%m-%d %H:%M} {t:%Z}"
 
     def save_ids(self, **ids: str) -> None:
-        """Write ids into deeploy.yaml in place, keeping its comments."""
+        """Write ids into deeploy.yaml, keeping its comments."""
         text = self.path.read_text()
         for key, value in ids.items():
             text = re.sub(rf'^(\s*{key}:)[ \t]*("[^"]*"|[^\s#]*)', rf'\g<1> "{value}"', text, count=1, flags=re.M)

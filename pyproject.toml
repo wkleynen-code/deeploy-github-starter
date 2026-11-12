@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deeploy-ci"
 version = "0.1.0"
-description = "Connect a GitHub Actions pipeline to Deeploy: test evidence, release approval, rule changes as issues"
+description = "Deeploy as a governance layer on top of GitHub Actions: test evidence, release approval, control changes as issues"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = ["requests>=2.31", "pyyaml>=6"]
+requires-python = ">=3.10,<3.13"   # the range of Deeploy's Python client
+dependencies = ["deeploy>=1.67", "requests>=2.31", "pyyaml>=6"]
 
 [project.scripts]
 deeploy-ci = "deeploy_ci.cli:main"
